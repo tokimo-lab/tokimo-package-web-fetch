@@ -140,10 +140,7 @@ impl BrowserFetch for LightpandaBrowser {
                 .map_err(|e| FetchError::Browser(format!("spawn failed: {e}")))?;
             if !output.status.success() {
                 let err = String::from_utf8_lossy(&output.stderr);
-                return Err(FetchError::Browser(format!(
-                    "exit {:?}: {err}",
-                    output.status.code()
-                )));
+                return Err(FetchError::Browser(format!("exit {:?}: {err}", output.status.code())));
             }
             Ok(String::from_utf8_lossy(&output.stdout).into_owned())
         };

@@ -1,0 +1,16 @@
+# Clippy behavioral thresholds — lint on/off is controlled in Cargo.toml [workspace.lints]
+
+# Axum handler + Sea-ORM repo 函数可能更复杂，放宽默认的 25
+cognitive-complexity-threshold = 30
+
+# 默认 7，Axum extractor 多时放宽一点
+too-many-arguments-threshold = 8
+
+# 默认 100，repo 查询函数偶尔更长
+too-many-lines-threshold = 200
+
+# pedantic 模式下不对公开 API 的签名提建议（避免 breaking changes）
+avoid-breaking-exported-api = true
+
+# 与实际 toolchain 一致（stable channel，不需要 MSRV 向后兼容保证）
+msrv = "1.94.0"

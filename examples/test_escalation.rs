@@ -44,10 +44,7 @@ async fn main() {
         println!("\n===== {url} =====");
         match fetcher.fetch_with(url, &opts).await {
             Ok(resp) => {
-                let text = resp
-                    .denoised
-                    .as_ref()
-                    .map_or("(none)", |d| d.content_text.as_str());
+                let text = resp.denoised.as_ref().map_or("(none)", |d| d.content_text.as_str());
                 let chars: usize = text.chars().filter(|c| !c.is_whitespace()).count();
                 println!(
                     "status={} used={:?} body_bytes={} readable_chars={}",

@@ -26,11 +26,7 @@ pub struct DenoisedArticle {
 /// 用 Readability 处理一段 HTML。
 ///
 /// `base_url` 用于解析相对链接和 site_name，没有时传请求 URL 即可。
-pub fn denoise_html(
-    html: &str,
-    request_url: &str,
-    base_url: &str,
-) -> FetchResult<DenoisedArticle> {
+pub fn denoise_html(html: &str, request_url: &str, base_url: &str) -> FetchResult<DenoisedArticle> {
     let config = Config {
         max_elements_to_parse: 0,
         ..Config::default()

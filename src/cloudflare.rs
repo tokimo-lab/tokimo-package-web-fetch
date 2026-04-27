@@ -73,11 +73,7 @@ impl CloudflareBypassClient {
     }
 
     /// 抓 HTML：优先 FlareSolverr，失败回退普通 GET。
-    pub async fn fetch_html(
-        &self,
-        url: &str,
-        cookie: Option<&str>,
-    ) -> FetchResult<CfFetchResult> {
+    pub async fn fetch_html(&self, url: &str, cookie: Option<&str>) -> FetchResult<CfFetchResult> {
         if let Some(ref flaresolverr_url) = self.flaresolverr_url {
             match self.fetch_via_flaresolverr(flaresolverr_url, url, cookie).await {
                 Ok(result) => return Ok(result),
@@ -149,11 +145,7 @@ impl CloudflareBypassClient {
         })
     }
 
-    async fn fetch_direct(
-        &self,
-        url: &str,
-        cookie: Option<&str>,
-    ) -> FetchResult<CfFetchResult> {
+    async fn fetch_direct(&self, url: &str, cookie: Option<&str>) -> FetchResult<CfFetchResult> {
         let mut req = self.http.get(url);
         if let Some(cookie) = cookie {
             req = req.header("Cookie", cookie);
@@ -162,7 +154,11 @@ impl CloudflareBypassClient {
         let final_url = resp.url().to_string();
         let status = resp.status().as_u16();
         let body = resp.text().await?;
-        Ok(CfFetchResult { status, body, final_url })
+        Ok(CfFetchResult {
+            status,
+            body,
+            final_url,
+        })
     }
 }
 

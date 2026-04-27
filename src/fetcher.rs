@@ -4,9 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::browser::BrowserFetch;
-use crate::cloudflare::{
-    CloudflareBypassClient, has_anti_bot_wall, is_under_challenge, looks_like_spa_or_blank,
-};
+use crate::cloudflare::{CloudflareBypassClient, has_anti_bot_wall, is_under_challenge, looks_like_spa_or_blank};
 use crate::error::{FetchError, FetchResult};
 use crate::readability::{DenoisedArticle, denoise_html};
 
@@ -115,9 +113,7 @@ impl WebFetcher {
     /// 默认配置：reqwest + Lightpanda autodetect + 无 FlareSolverr。
     #[must_use]
     pub fn with_defaults() -> Self {
-        WebFetcherBuilder::default()
-            .with_lightpanda_autodetect()
-            .build()
+        WebFetcherBuilder::default().with_lightpanda_autodetect().build()
     }
 
     pub fn http_client(&self) -> &reqwest::Client {
@@ -134,11 +130,7 @@ impl WebFetcher {
     }
 
     /// 抓一个 URL，覆盖 options。
-    pub async fn fetch_with(
-        &self,
-        url: &str,
-        opts: &FetchOptions,
-    ) -> FetchResult<FetchResponse> {
+    pub async fn fetch_with(&self, url: &str, opts: &FetchOptions) -> FetchResult<FetchResponse> {
         // SSRF 防护：在发起任何网络请求前验证目标 IP 不属于私有/内网地址。
         // 已知局限：DNS rebinding (TOCTOU) 和 redirect-based bypass 无法在此层完全阻止；
         // 详见 ssrf.rs 文档注释。
@@ -159,15 +151,11 @@ impl WebFetcher {
         // （典型：JS 渲染的 SPA / 列表页只有导航文字），或 Readability 直接
         // 失败（例如 doubao.com 这种纯 SPA 静态 HTML 根本没有正文），如果
         // 配置了浏览器通道，再用浏览器重抓一次。
-        let (raw, denoised) = self
-            .maybe_escalate_to_browser(url, opts, raw, denoised)
-            .await;
+        let (raw, denoised) = self.maybe_escalate_to_browser(url, opts, raw, denoised).await;
 
         // 如果调用方明确要求 Readability 但最终仍然没有结果，返回错误。
         if opts.denoise == Denoise::Readability && denoised.is_none() {
-            return Err(FetchError::Readability(
-                "failed to extract readable content".into(),
-            ));
+            return Err(FetchError::Readability("failed to extract readable content".into()));
         }
 
         Ok(FetchResponse {
@@ -211,8 +199,7 @@ impl WebFetcher {
         );
         match self.browser_or_fallback(url, opts).await {
             Some(Ok(new_raw)) => {
-                let new_denoised =
-                    denoise_html(&new_raw.body, url, &new_raw.final_url).ok();
+                let new_denoised = denoise_html(&new_raw.body, url, &new_raw.final_url).ok();
                 let new_chars: usize = new_denoised
                     .as_ref()
                     .map_or(0, |d| d.content_text.chars().filter(|c| !c.is_whitespace()).count());
@@ -270,16 +257,9 @@ impl WebFetcher {
     }
 
     /// 试图调用浏览器；浏览器不可用时返回 None（调用方负责降级 + 打日志已在此函数内完成）。
-    async fn browser_or_fallback(
-        &self,
-        url: &str,
-        _opts: &FetchOptions,
-    ) -> Option<FetchResult<RawFetch>> {
+    async fn browser_or_fallback(&self, url: &str, _opts: &FetchOptions) -> Option<FetchResult<RawFetch>> {
         let Some(browser) = &self.browser else {
-            tracing::warn!(
-                url,
-                "请求使用无头浏览器但未配置可用浏览器，降级到普通 HTTP 请求"
-            );
+            tracing::warn!(url, "请求使用无头浏览器但未配置可用浏览器，降级到普通 HTTP 请求");
             return None;
         };
         let name = browser.name();
@@ -297,16 +277,9 @@ impl WebFetcher {
         })
     }
 
-    async fn fetch_cf_or_fallback(
-        &self,
-        url: &str,
-        opts: &FetchOptions,
-    ) -> FetchResult<RawFetch> {
+    async fn fetch_cf_or_fallback(&self, url: &str, opts: &FetchOptions) -> FetchResult<RawFetch> {
         if self.cf.is_none() {
-            tracing::warn!(
-                url,
-                "请求 CloudflareBypass 但未配置 FlareSolverr，降级到普通 HTTP 请求"
-            );
+            tracing::warn!(url, "请求 CloudflareBypass 但未配置 FlareSolverr，降级到普通 HTTP 请求");
             return self.fetch_http(url, opts).await;
         }
         self.fetch_cf(url, opts).await

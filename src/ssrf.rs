@@ -46,9 +46,7 @@ pub async fn check_ssrf(url: &str) -> FetchResult<()> {
     let host_lc = host.to_lowercase();
 
     if BLOCKED_HOSTNAMES.contains(&host_lc.as_str()) {
-        return Err(FetchError::SsrfBlocked(format!(
-            "blocked internal hostname: {host_lc}"
-        )));
+        return Err(FetchError::SsrfBlocked(format!("blocked internal hostname: {host_lc}")));
     }
 
     // IP literal in URL — check directly, no DNS needed.
@@ -70,19 +68,9 @@ pub async fn check_ssrf(url: &str) -> FetchResult<()> {
     )
     .await
     {
-        Err(_elapsed) => {
-            return Err(FetchError::SsrfBlocked(format!("DNS timeout for: {host_lc}")))
-        }
-        Ok(Err(join_err)) => {
-            return Err(FetchError::SsrfBlocked(format!(
-                "DNS task failed: {join_err}"
-            )))
-        }
-        Ok(Ok(Err(_io_err))) => {
-            return Err(FetchError::SsrfBlocked(format!(
-                "DNS resolution failed for: {host_lc}"
-            )))
-        }
+        Err(_elapsed) => return Err(FetchError::SsrfBlocked(format!("DNS timeout for: {host_lc}"))),
+        Ok(Err(join_err)) => return Err(FetchError::SsrfBlocked(format!("DNS task failed: {join_err}"))),
+        Ok(Ok(Err(_io_err))) => return Err(FetchError::SsrfBlocked(format!("DNS resolution failed for: {host_lc}"))),
         Ok(Ok(Ok(v))) => v,
     };
 
@@ -126,7 +114,7 @@ fn is_blocked_ipv4(addr: Ipv4Addr) -> bool {
     || o[0] == 0                              // Unspecified: 0.0.0.0/8
     || (o[0] & 0xf0) == 224                   // Multicast: 224.0.0.0/4
     || o[0] >= 240                            // Reserved/future (240.0.0.0/4) + broadcast
-    || (o[0] == 198 && (o[1] & 0xfe) == 18)  // Benchmarking (RFC 2544): 198.18.0.0/15
+    || (o[0] == 198 && (o[1] & 0xfe) == 18) // Benchmarking (RFC 2544): 198.18.0.0/15
 }
 
 /// Returns `true` for any IPv6 address that should not be reachable from a
@@ -144,5 +132,5 @@ fn is_blocked_ipv6(addr: Ipv6Addr) -> bool {
     || (s[0] >> 8) == 0xff               // Multicast: ff00::/8
     || (s[0] & 0xffc0) == 0xfe80         // Link-local: fe80::/10
     || (s[0] & 0xfe00) == 0xfc00         // Unique local (ULA): fc00::/7
-    || (s[0] & 0xffc0) == 0xfec0         // Legacy site-local (deprecated, RFC 3879): fec0::/10
+    || (s[0] & 0xffc0) == 0xfec0 // Legacy site-local (deprecated, RFC 3879): fec0::/10
 }

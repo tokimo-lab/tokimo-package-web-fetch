@@ -29,10 +29,7 @@ pub mod ssrf;
 pub use browser::{BrowserFetch, LightpandaBrowser};
 pub use cloudflare::{CfFetchResult, CloudflareBypassClient, is_under_challenge};
 pub use error::{FetchError, FetchResult};
-pub use fetcher::{
-    Denoise, FetchMode, FetchOptions, FetchResponse, UsedChannel, WebFetcher,
-    WebFetcherBuilder,
-};
+pub use fetcher::{Denoise, FetchMode, FetchOptions, FetchResponse, UsedChannel, WebFetcher, WebFetcherBuilder};
 pub use readability::{DenoisedArticle, denoise_html};
 
 /// 默认 UA 使用较新的桌面 Chrome。
@@ -41,6 +38,5 @@ pub use readability::{DenoisedArticle, denoise_html};
 /// 会对 `Firefox/135` 这种较新 Firefox UA 直接返回 403 `denied by UA ACL = blacklist`
 /// （例如 tianqi.eastday.com / tianqi.com），导致 Readability 抓到的只是
 /// 一个 311 字节的 403 提示页。Chrome UA 实测能穿过这些默认规则。
-pub const DEFAULT_USER_AGENT: &str =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
      (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
