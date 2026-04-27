@@ -1,0 +1,11 @@
+# 与所有包的 Cargo.toml edition 保持一致
+edition = "2024"
+style_edition = "2024"
+
+# Axum handler / Sea-ORM builder 链式调用较长，100 太窄
+max_width = 120
+
+# 现代 Rust 惯例
+use_try_shorthand = true
+use_field_init_shorthand = true
+
