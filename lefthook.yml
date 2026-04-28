@@ -1,0 +1,33 @@
+# Tokimo monorepo pre-commit hooks (Lefthook)
+# 触发：git commit 时自动按文件类型并行 fmt staged 文件
+# 文档：https://lefthook.dev
+#
+# 安装/启用：./scripts/install-hooks.sh（也会在 pnpm install 时自动跑）
+# 同步到所有 submodule：./scripts/sync-hooks-to-submodules.sh
+
+pre-commit:
+  parallel: true
+  commands:
+    rustfmt:
+      tags: rust fmt
+      glob: "*.rs"
+      # 按文件路径向上查找最近 Cargo.toml 的 edition，避免硬编码不一致
+      run: |
+        for f in {staged_files}; do
+          dir=$(dirname "$f")
+          while [ "$dir" != "." ] && [ "$dir" != "/" ] && [ ! -f "$dir/Cargo.toml" ]; do
+            dir=$(dirname "$dir")
+          done
+          edition=$(grep -m1 '^edition' "$dir/Cargo.toml" 2>/dev/null | sed 's/.*"\([^"]*\)".*/\1/')
+          rustfmt --edition "${edition:-2024}" "$f"
+        done
+      stage_fixed: true
+
+    biome:
+      tags: web fmt
+      glob: "*.{ts,tsx,js,jsx,mjs,cjs,json,jsonc,css}"
+      run: |
+        files="{staged_files}"
+        [ -z "$files" ] && exit 0
+        pnpm exec biome format --write --no-errors-on-unmatched $files
+      stage_fixed: true
