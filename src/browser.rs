@@ -50,9 +50,10 @@ impl LightpandaBrowser {
 
     /// 查找顺序：
     /// 1. `$LIGHTPANDA_BIN`（显式覆盖）
-    /// 2. 工作区 `bin/lightpanda`（`make lightpanda` 的产物，向上找到第一个 `bin/lightpanda`）
-    /// 3. `$PATH`
-    /// 4. `~/.local/bin/lightpanda` / `/usr/local/bin/lightpanda`
+    /// 2. 工作区 `bin/lightpanda/current/bin/lightpanda`（deps.toml 管理布局，优先）
+    /// 3. 工作区 `bin/lightpanda`（旧 flat 布局，兼容期保留）
+    /// 4. `$PATH`
+    /// 5. `~/.local/bin/lightpanda` / `/usr/local/bin/lightpanda`
     #[must_use]
     pub fn autodetect() -> Option<Self> {
         if let Ok(p) = std::env::var("LIGHTPANDA_BIN") {
@@ -83,17 +84,26 @@ impl LightpandaBrowser {
     }
 }
 
-/// 从 `CARGO_MANIFEST_DIR` 或当前目录向上递归查找 `bin/lightpanda`。
+/// 从 `CARGO_MANIFEST_DIR` 或当前目录向上递归查找 lightpanda 二进制。
+/// 优先 deps.toml 管理的 `bin/lightpanda/current/bin/lightpanda[.exe]`，
+/// 兼容 fallback 到旧 flat 布局 `bin/lightpanda[.exe]`。
 fn find_workspace_bin() -> Option<PathBuf> {
     let start = std::env::var("CARGO_MANIFEST_DIR")
         .ok()
         .map(PathBuf::from)
         .or_else(|| std::env::current_dir().ok())?;
+    let exe_suffix = if cfg!(windows) { ".exe" } else { "" };
+    let candidates = [
+        format!("bin/lightpanda/current/bin/lightpanda{exe_suffix}"),
+        format!("bin/lightpanda{exe_suffix}"),
+    ];
     let mut dir = start.as_path();
     loop {
-        let cand = dir.join("bin").join("lightpanda");
-        if cand.is_file() {
-            return Some(cand);
+        for rel in &candidates {
+            let cand = dir.join(rel);
+            if cand.is_file() {
+                return Some(cand);
+            }
         }
         dir = dir.parent()?;
     }
