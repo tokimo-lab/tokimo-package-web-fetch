@@ -11,16 +11,8 @@ pre-commit:
     rustfmt:
       tags: rust fmt
       glob: "*.rs"
-      # 按文件路径向上查找最近 Cargo.toml 的 edition，避免硬编码不一致
-      run: |
-        for f in {staged_files}; do
-          dir=$(dirname "$f")
-          while [ "$dir" != "." ] && [ "$dir" != "/" ] && [ ! -f "$dir/Cargo.toml" ]; do
-            dir=$(dirname "$dir")
-          done
-          edition=$(grep -m1 '^edition' "$dir/Cargo.toml" 2>/dev/null | sed 's/.*"\([^"]*\)".*/\1/')
-          rustfmt --edition "${edition:-2024}" "$f"
-        done
+      # Shell script in a separate file avoids inline quoting issues on Windows.
+      run: scripts/lefthook-rustfmt.sh {staged_files}
       stage_fixed: true
 
     biome:
