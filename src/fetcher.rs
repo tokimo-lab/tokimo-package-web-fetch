@@ -53,6 +53,8 @@ pub struct FetchOptions {
     pub cookie: Option<String>,
     /// 额外请求头（仅 HTTP 通道）。
     pub extra_headers: Vec<(String, String)>,
+    /// 是否启用 SSRF 防护（检查目标 IP 是否为私有/内网地址）。默认关闭。
+    pub ssrf_enabled: bool,
 }
 
 impl Default for FetchOptions {
@@ -63,6 +65,7 @@ impl Default for FetchOptions {
             timeout: Duration::from_secs(30),
             cookie: None,
             extra_headers: Vec::new(),
+            ssrf_enabled: false,
         }
     }
 }
@@ -134,7 +137,9 @@ impl WebFetcher {
         // SSRF 防护：在发起任何网络请求前验证目标 IP 不属于私有/内网地址。
         // 已知局限：DNS rebinding (TOCTOU) 和 redirect-based bypass 无法在此层完全阻止；
         // 详见 ssrf.rs 文档注释。
-        crate::ssrf::check_ssrf(url).await?;
+        if opts.ssrf_enabled {
+            crate::ssrf::check_ssrf(url).await?;
+        }
 
         let raw = tokio::time::timeout(opts.timeout, self.fetch_raw(url, opts))
             .await

@@ -102,7 +102,7 @@ fn is_blocked_ip(ip: IpAddr) -> bool {
 
 /// Returns `true` for any IPv4 address that should not be reachable from a
 /// public web agent: loopback, link-local, RFC-1918 private, CGNAT,
-/// unspecified, multicast, reserved/future-use, and benchmarking ranges.
+/// unspecified, multicast, and reserved/future-use ranges.
 fn is_blocked_ipv4(addr: Ipv4Addr) -> bool {
     let o = addr.octets();
     o[0] == 127                               // Loopback: 127.0.0.0/8
@@ -114,7 +114,6 @@ fn is_blocked_ipv4(addr: Ipv4Addr) -> bool {
     || o[0] == 0                              // Unspecified: 0.0.0.0/8
     || (o[0] & 0xf0) == 224                   // Multicast: 224.0.0.0/4
     || o[0] >= 240                            // Reserved/future (240.0.0.0/4) + broadcast
-    || (o[0] == 198 && (o[1] & 0xfe) == 18) // Benchmarking (RFC 2544): 198.18.0.0/15
 }
 
 /// Returns `true` for any IPv6 address that should not be reachable from a
