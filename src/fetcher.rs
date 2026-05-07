@@ -113,10 +113,10 @@ impl WebFetcher {
         WebFetcherBuilder::default()
     }
 
-    /// 默认配置：reqwest + Lightpanda autodetect + 无 FlareSolverr。
+    /// 默认配置：reqwest + headless 浏览器 autodetect（Lightpanda → Chrome）+ 无 FlareSolverr。
     #[must_use]
     pub fn with_defaults() -> Self {
-        WebFetcherBuilder::default().with_lightpanda_autodetect().build()
+        WebFetcherBuilder::default().with_autodetect().build()
     }
 
     pub fn http_client(&self) -> &reqwest::Client {
@@ -384,6 +384,15 @@ impl WebFetcherBuilder {
     pub fn with_lightpanda_autodetect(mut self) -> Self {
         if let Some(lp) = crate::browser::LightpandaBrowser::autodetect() {
             self.browser = Some(Arc::new(lp));
+        }
+        self
+    }
+
+    /// 自动探测可用的 headless 浏览器：优先 Lightpanda，回退到 Chrome/Chromium。
+    #[must_use]
+    pub fn with_autodetect(mut self) -> Self {
+        if let Some(browser) = crate::browser::autodetect_browser() {
+            self.browser = Some(browser);
         }
         self
     }

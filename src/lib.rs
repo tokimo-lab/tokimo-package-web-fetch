@@ -26,7 +26,7 @@ pub mod fetcher;
 pub mod readability;
 pub mod ssrf;
 
-pub use browser::{BrowserFetch, LightpandaBrowser};
+pub use browser::{BrowserFetch, ChromeBrowser, LightpandaBrowser, autodetect_browser};
 pub use cloudflare::{CfFetchResult, CloudflareBypassClient, is_under_challenge};
 pub use error::{FetchError, FetchResult};
 pub use fetcher::{Denoise, FetchMode, FetchOptions, FetchResponse, UsedChannel, WebFetcher, WebFetcherBuilder};
