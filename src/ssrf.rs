@@ -113,7 +113,7 @@ fn is_blocked_ipv4(addr: Ipv4Addr) -> bool {
     || (o[0] == 100 && (o[1] & 0xc0) == 64)  // CGNAT/Shared (RFC 6598): 100.64.0.0/10
     || o[0] == 0                              // Unspecified: 0.0.0.0/8
     || (o[0] & 0xf0) == 224                   // Multicast: 224.0.0.0/4
-    || o[0] >= 240                            // Reserved/future (240.0.0.0/4) + broadcast
+    || o[0] >= 240 // Reserved/future (240.0.0.0/4) + broadcast
 }
 
 /// Returns `true` for any IPv6 address that should not be reachable from a
