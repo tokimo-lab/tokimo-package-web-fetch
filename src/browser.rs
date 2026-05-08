@@ -174,7 +174,26 @@ pub struct ChromeBrowser {
     bin: PathBuf,
     /// 单页抓取超时（外层 tokio timeout 兜底）
     pub timeout: Duration,
+    /// `--virtual-time-budget` 毫秒数；Chrome 会在虚拟时间推进这么多毫秒后再 dump DOM，
+    /// 用来让 SPA 页面的异步 JS（天气 API、列表渲染等）有机会执行完毕。
+    /// 设为 `None` 则不传该 flag，Chrome 使用默认行为（等 load 事件即 dump）。
+    ///
+    /// 推荐值（Chrome/Puppeteer 社区惯例）：
+    /// - 静态页：不需要
+    /// - 轻 SPA（React/Vue 基本渲染）：1000–3000
+    /// - 带 API 调用的 SPA（天气、新闻列表等）：5000–10000
+    /// - 重型 dashboard：10000–20000
+    ///
+    /// 详见 [`VIRTUAL_TIME_BUDGET_DEFAULT`]。
+    pub virtual_time_budget_ms: Option<u32>,
 }
+
+/// 带 API 调用的 SPA 页面推荐的 `--virtual-time-budget` 默认值（10 秒）。
+///
+/// Chrome/Puppeteer 社区惯例：SPA 页面需要 5–10s 让异步 JS + 网络请求完成。
+/// 该值适用于需要远程 API 调用的页面（天气、新闻、列表等），
+/// 对纯前端渲染的轻量 SPA 可适当降低至 3000–5000。
+pub const VIRTUAL_TIME_BUDGET_DEFAULT: u32 = 10_000;
 
 /// Chrome 路径缓存，整个进程生命周期只搜索一次。
 static CHROME_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
@@ -187,6 +206,7 @@ impl ChromeBrowser {
         Self {
             bin: bin.into(),
             timeout: Duration::from_secs(30),
+            virtual_time_budget_ms: Some(VIRTUAL_TIME_BUDGET_DEFAULT),
         }
     }
 
@@ -303,8 +323,11 @@ impl BrowserFetch for ChromeBrowser {
             .arg("--no-sandbox")
             .arg("--disable-gpu")
             .arg("--disable-dev-shm-usage")
-            .arg("--dump-dom")
-            .arg(url);
+            .arg("--dump-dom");
+        if let Some(ms) = self.virtual_time_budget_ms {
+            cmd.arg(format!("--virtual-time-budget={ms}"));
+        }
+        cmd.arg(url);
         cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
