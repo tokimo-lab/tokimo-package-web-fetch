@@ -64,3 +64,4 @@ workspace = true
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+dom_smoothie = "0.17"

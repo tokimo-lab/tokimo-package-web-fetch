@@ -27,7 +27,7 @@ pub mod readability;
 pub mod ssrf;
 
 pub use browser::{BrowserFetch, ChromeBrowser, LightpandaBrowser, autodetect_browser};
-pub use cloudflare::{CfFetchResult, CloudflareBypassClient, is_under_challenge};
+pub use cloudflare::{CfFetchResult, CloudflareBypassClient, is_under_challenge, looks_like_spa_or_blank};
 pub use error::{FetchError, FetchResult};
 pub use fetcher::{Denoise, FetchMode, FetchOptions, FetchResponse, UsedChannel, WebFetcher, WebFetcherBuilder};
 pub use readability::{DenoisedArticle, denoise_html};
