@@ -15,6 +15,11 @@ pre-commit:
       run: scripts/lefthook-rustfmt.sh {staged_files}
       stage_fixed: true
 
+    clippy:
+      tags: rust lint
+      glob: "*.rs"
+      run: cargo clippy --lib --bins --tests -- -D warnings
+
     biome:
       tags: web fmt
       glob: "*.{ts,tsx,js,jsx,mjs,cjs,json,jsonc,css}"

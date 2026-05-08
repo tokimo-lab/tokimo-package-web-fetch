@@ -1,5 +1,7 @@
 //! SPA 检测逻辑集成测试：验证 tianqi.qq.com 等 SPA 页面能否被正确识别。
 
+#![allow(clippy::print_stdout)]
+
 use dom_smoothie::{Config, Readability};
 use tokimo_web_fetch::cloudflare::looks_like_spa_or_blank;
 use tokimo_web_fetch::denoise_html;
