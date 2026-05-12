@@ -195,7 +195,7 @@ pub struct ChromeBrowser {
 /// Chrome/Puppeteer 社区惯例：SPA 页面需要 5–10s 让异步 JS + 网络请求完成。
 /// 该值适用于需要远程 API 调用的页面（天气、新闻、列表等），
 /// 对纯前端渲染的轻量 SPA 可适当降低至 3000–5000。
-pub const VIRTUAL_TIME_BUDGET_DEFAULT: u32 = 10_000;
+pub const VIRTUAL_TIME_BUDGET_DEFAULT: u32 = 8_000;
 
 /// Chrome 路径缓存，整个进程生命周期只搜索一次。
 static CHROME_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
@@ -207,7 +207,7 @@ impl ChromeBrowser {
     pub fn new<P: Into<PathBuf>>(bin: P) -> Self {
         Self {
             bin: bin.into(),
-            timeout: Duration::from_secs(30),
+            timeout: Duration::from_secs(12),
             virtual_time_budget_ms: Some(VIRTUAL_TIME_BUDGET_DEFAULT),
         }
     }
@@ -347,18 +347,25 @@ impl BrowserFetch for ChromeBrowser {
             .spawn()
             .map_err(|e| FetchError::Browser(format!("spawn failed: {e}")))?;
 
-        // 手动接管 stdout，避免 wait_with_output 的借用冲突，
-        // 以便超时时能安全调用 child.kill()。
+        // 手动接管 stdout，把 buffer 提到外层：超时时也能保留已读到的 DOM
+        // 片段，避免外层 timeout 触发后直接丢弃所有数据。
         let mut stdout = child.stdout.take().expect("piped stdout");
+        let buf = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::<u8>::new()));
+        let buf_reader = std::sync::Arc::clone(&buf);
 
         let read_fut = async {
             use tokio::io::AsyncReadExt;
-            let mut buf = Vec::new();
-            stdout
-                .read_to_end(&mut buf)
-                .await
-                .map_err(|e| FetchError::Browser(format!("stdout read failed: {e}")))?;
-            // stdout 读完（进程关闭管道），等待退出码
+            let mut chunk = [0u8; 8192];
+            loop {
+                match stdout.read(&mut chunk).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let mut shared = buf_reader.lock().await;
+                        shared.extend_from_slice(&chunk[..n]);
+                    }
+                    Err(e) => return Err(FetchError::Browser(format!("stdout read failed: {e}"))),
+                }
+            }
             let status = child
                 .wait()
                 .await
@@ -366,14 +373,21 @@ impl BrowserFetch for ChromeBrowser {
             if !status.success() {
                 return Err(FetchError::Browser(format!("exit {:?}", status.code())));
             }
-            Ok(String::from_utf8_lossy(&buf).into_owned())
+            let bytes = buf_reader.lock().await.clone();
+            Ok(String::from_utf8_lossy(&bytes).into_owned())
         };
 
         match tokio::time::timeout(self.timeout, read_fut).await {
             Err(_elapsed) => {
-                // 超时：杀掉进程防止泄漏
+                // 超时：先杀进程防泄漏，再把已 dump 出来的部分尽量利用起来。
                 let _ = child.kill().await;
-                Err(FetchError::Timeout)
+                let partial = buf.lock().await.clone();
+                if partial.len() > 1024 {
+                    tracing::warn!("chrome timeout but recovered {} bytes of partial DOM", partial.len());
+                    Ok(String::from_utf8_lossy(&partial).into_owned())
+                } else {
+                    Err(FetchError::Timeout)
+                }
             }
             Ok(result) => result,
         }
