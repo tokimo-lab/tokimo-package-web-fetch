@@ -195,7 +195,7 @@ pub struct ChromeBrowser {
 /// Chrome/Puppeteer 社区惯例：SPA 页面需要 5–10s 让异步 JS + 网络请求完成。
 /// 该值适用于需要远程 API 调用的页面（天气、新闻、列表等），
 /// 对纯前端渲染的轻量 SPA 可适当降低至 3000–5000。
-pub const VIRTUAL_TIME_BUDGET_DEFAULT: u32 = 8_000;
+pub const VIRTUAL_TIME_BUDGET_DEFAULT: u32 = 5_000;
 
 /// Chrome 路径缓存，整个进程生命周期只搜索一次。
 static CHROME_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
@@ -207,7 +207,7 @@ impl ChromeBrowser {
     pub fn new<P: Into<PathBuf>>(bin: P) -> Self {
         Self {
             bin: bin.into(),
-            timeout: Duration::from_secs(12),
+            timeout: Duration::from_secs(10),
             virtual_time_budget_ms: Some(VIRTUAL_TIME_BUDGET_DEFAULT),
         }
     }
@@ -336,7 +336,7 @@ impl BrowserFetch for ChromeBrowser {
             // `--timeout` 给 Chrome 内部一个硬上限，超过就强制 dump 然后
             // 退出；防止 tieba / 百度系页面一直长轮询 XHR 让 Chrome 永远
             // 等不到"网络空闲"。配合 virtual-time-budget 使用，给一些 buffer。
-            cmd.arg(format!("--timeout={}", ms.saturating_add(5_000)));
+            cmd.arg(format!("--timeout={}", ms.saturating_add(2_000)));
         }
         cmd.arg("--dump-dom").arg(url);
         cmd.stdin(std::process::Stdio::null());
@@ -382,11 +382,11 @@ impl BrowserFetch for ChromeBrowser {
                 // 超时：先杀进程防泄漏，再把已 dump 出来的部分尽量利用起来。
                 let _ = child.kill().await;
                 let partial = buf.lock().await.clone();
-                if partial.len() > 1024 {
+                if partial.is_empty() {
+                    Err(FetchError::Timeout)
+                } else {
                     tracing::warn!("chrome timeout but recovered {} bytes of partial DOM", partial.len());
                     Ok(String::from_utf8_lossy(&partial).into_owned())
-                } else {
-                    Err(FetchError::Timeout)
                 }
             }
             Ok(result) => result,
