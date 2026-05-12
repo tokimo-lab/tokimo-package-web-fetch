@@ -2,7 +2,7 @@
 //!
 //! 提供三种通道：
 //! - **HTTP**：普通 `reqwest::Client::get`
-//! - **Browser**：调用本地 `lightpanda` headless 浏览器执行 JS 后取 HTML
+//! - **Browser**：调用本地 headless 浏览器执行 JS 后取 HTML（默认探测 Chrome / Chromium）
 //! - **CloudflareBypass**：通过 [FlareSolverr] 绕 CF 挑战
 //!
 //! 以及可选的 [Readability] 降噪，把 HTML 抽成主文 + 元数据。
@@ -10,7 +10,7 @@
 //! 入口：[`WebFetcher`]，用 [`WebFetcher::builder`] 构造，[`WebFetcher::fetch_with`] 调用。
 //!
 //! 行为约定：当请求方指定 `FetchMode::Browser` 但当前 `WebFetcher`
-//! 没有可用的浏览器实例（`autodetect` 没找到 lightpanda、也没手动注入），
+//! 没有可用的浏览器实例（`autodetect` 没找到 Chrome、也没手动注入），
 //! 会打 `WARN` 日志后降级到普通 HTTP 请求。`FetchMode::CloudflareBypass`
 //! 在没配 FlareSolverr 时同理。
 //!

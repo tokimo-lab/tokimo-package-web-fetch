@@ -21,10 +21,7 @@ async fn main() {
         .timeout(Duration::from_secs(30))
         .build()
         .unwrap();
-    let fetcher = WebFetcher::builder()
-        .http_client(http)
-        .with_lightpanda_autodetect()
-        .build();
+    let fetcher = WebFetcher::builder().http_client(http).with_autodetect().build();
 
     let urls = [
         "https://tianqi.eastday.com/tianqi/shanghai/20260418.html",

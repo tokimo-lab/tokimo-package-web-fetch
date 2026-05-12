@@ -3,11 +3,13 @@
 //! 对付纯 JS 渲染 / 反爬站点（toutiao、zhihu、douyin、reCAPTCHA 等），
 //! 上层可以注入一个实现来让上游通过真浏览器拿 HTML。
 //!
-//! 本 crate 自带两种 headless 浏览器后端（按优先级）：
-//! - [`LightpandaBrowser`]：极轻量 CLI 浏览器（<https://lightpanda.io>）
-//! - [`ChromeBrowser`]：系统已安装的 Chrome / Chromium（`--headless=new --dump-dom`）
+//! 本 crate 自带两种 headless 浏览器后端：
+//! - [`ChromeBrowser`]：系统已安装的 Chrome / Chromium（`--headless=new --dump-dom`），autodetect 默认使用
+//! - [`LightpandaBrowser`]：极轻量 CLI 浏览器（<https://lightpanda.io>），仅在显式 opt-in 时启用；
+//!   对现代前端（React/Vue SPA、微博、抖音等）兼容性差，autodetect 已**不再**回退到它
 //!
-//! 通过 [`autodetect_browser`] 自动探测并选择可用的后端。
+//! 通过 [`autodetect_browser`] 只会探测 Chrome；想用 Lightpanda 的话请显式调用
+//! [`crate::WebFetcherBuilder::with_lightpanda_autodetect`]。
 
 use crate::error::{FetchError, FetchResult};
 use async_trait::async_trait;
@@ -323,11 +325,20 @@ impl BrowserFetch for ChromeBrowser {
             .arg("--no-sandbox")
             .arg("--disable-gpu")
             .arg("--disable-dev-shm-usage")
-            .arg("--dump-dom");
+            .arg("--hide-scrollbars")
+            .arg(format!("--user-agent={}", crate::DEFAULT_USER_AGENT));
+        // `--virtual-time-budget` 让 Chrome 把 N 毫秒的 setTimeout / 跳转
+        // 折叠到极短的真实时间内执行完，避免 --dump-dom 在第一个 load
+        // 事件就 dump 走（典型坑：微博 passport.visitor 中转页、各种
+        // meta-refresh 中转，不加这个 flag 只能抓到中转壳子）。
         if let Some(ms) = self.virtual_time_budget_ms {
             cmd.arg(format!("--virtual-time-budget={ms}"));
+            // `--timeout` 给 Chrome 内部一个硬上限，超过就强制 dump 然后
+            // 退出；防止 tieba / 百度系页面一直长轮询 XHR 让 Chrome 永远
+            // 等不到"网络空闲"。配合 virtual-time-budget 使用，给一些 buffer。
+            cmd.arg(format!("--timeout={}", ms.saturating_add(5_000)));
         }
-        cmd.arg(url);
+        cmd.arg("--dump-dom").arg(url);
         cmd.stdin(std::process::Stdio::null());
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
@@ -369,16 +380,19 @@ impl BrowserFetch for ChromeBrowser {
     }
 }
 
-/// 自动探测可用的 headless 浏览器：优先 Lightpanda（轻量快速），回退到 Chrome。
+/// 自动探测可用的 headless 浏览器：只检测 Chrome / Chromium。
+///
+/// 历史上曾经把 Lightpanda 作为默认首选（更轻量、启动更快），但实测下来它对
+/// 现代前端（微博的 React bundle、抖音、知乎等）经常在执行 JS 时直接抛
+/// `caught.exception=Unknown` 而水合失败，并且**仍以 exit 0 返回一张空壳 DOM**，
+/// 导致上层无从识别失败、也不会再回退到 Chrome。为了避免这种"假装成功"，
+/// 现在 autodetect 链路里彻底移除 Lightpanda：调用方如果仍想用，可显式调用
+/// [`crate::WebFetcherBuilder::with_lightpanda_autodetect`] 自负盈亏。
 pub fn autodetect_browser() -> Option<Arc<dyn BrowserFetch>> {
-    if let Some(lp) = LightpandaBrowser::autodetect() {
-        tracing::info!("autodetected headless browser: lightpanda");
-        return Some(Arc::new(lp));
-    }
     if let Some(ch) = ChromeBrowser::autodetect() {
         tracing::info!("autodetected headless browser: chrome");
         return Some(Arc::new(ch));
     }
-    tracing::info!("no headless browser detected (lightpanda / chrome)");
+    tracing::info!("no headless browser detected (chrome / chromium)");
     None
 }

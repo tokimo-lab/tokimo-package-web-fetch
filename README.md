@@ -1,16 +1,16 @@
 # tokimo-package-web-fetch
 
-Unified web page fetcher for Rust — HTTP, headless browser (Lightpanda), and Cloudflare bypass (FlareSolverr), with optional Readability denoising.
+Unified web page fetcher for Rust — HTTP, headless browser (Chrome / Chromium), and Cloudflare bypass (FlareSolverr), with optional Readability denoising.
 
 ## Features
 
 - **Three fetch channels** — choose per request or let the fetcher auto-degrade gracefully:
   - `HTTP` — plain `reqwest` GET with custom UA
-  - `Browser` — calls a local [Lightpanda](https://github.com/lightpanda-io/browser) headless browser to execute JavaScript before reading HTML
+  - `Browser` — calls a local headless Chrome / Chromium (`--headless=new --dump-dom`) to execute JavaScript before reading HTML. Lightpanda is also available as an opt-in backend, but is **not** picked by autodetect — it silently fails on most modern SPAs (microblog / video sites).
   - `CloudflareBypass` — routes through [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) to solve Cloudflare challenges
 - **Readability denoising** — strips ads / nav / boilerplate from HTML via [`dom_smoothie`](https://crates.io/crates/dom_smoothie), returning clean `DenoisedArticle { title, text_content, content, … }`
 - **SSRF protection** — blocks fetches to private / loopback / link-local address ranges
-- **Graceful fallback** — if `Browser` mode is requested but Lightpanda is not available, falls back to HTTP with a `WARN` log
+- **Graceful fallback** — if `Browser` mode is requested but no Chrome is available, falls back to HTTP with a `WARN` log
 
 ## Usage
 
