@@ -3,13 +3,8 @@
 //! 对付纯 JS 渲染 / 反爬站点（toutiao、zhihu、douyin、reCAPTCHA 等），
 //! 上层可以注入一个实现来让上游通过真浏览器拿 HTML。
 //!
-//! 本 crate 自带两种 headless 浏览器后端：
-//! - [`ChromeBrowser`]：系统已安装的 Chrome / Chromium（`--headless=new --dump-dom`），autodetect 默认使用
-//! - [`LightpandaBrowser`]：极轻量 CLI 浏览器（<https://lightpanda.io>），仅在显式 opt-in 时启用；
-//!   对现代前端（React/Vue SPA、微博、抖音等）兼容性差，autodetect 已**不再**回退到它
-//!
-//! 通过 [`autodetect_browser`] 只会探测 Chrome；想用 Lightpanda 的话请显式调用
-//! [`crate::WebFetcherBuilder::with_lightpanda_autodetect`]。
+//! 本 crate 使用系统已安装的 Chrome / Chromium（`--headless=new --dump-dom`），
+//! 通过 [`autodetect_browser`] 自动探测。
 
 use crate::error::{FetchError, FetchResult};
 use async_trait::async_trait;
@@ -29,93 +24,6 @@ pub trait BrowserFetch: Send + Sync {
     }
 }
 
-/// 用系统 `lightpanda` CLI 作为 headless 浏览器。
-///
-/// 找不到二进制时 [`LightpandaBrowser::autodetect`] 返回 `None`。
-pub struct LightpandaBrowser {
-    bin: PathBuf,
-    /// 单页抓取超时（外层 tokio timeout 兜底）
-    pub timeout: Duration,
-    /// `--wait-until` 策略，默认 "networkidle"
-    pub wait_until: String,
-    /// 固定等待毫秒（用来对付 zse-ck 这种挑战）
-    pub wait_ms: Option<u32>,
-    /// 可选的等待选择器（优先级高于 wait_ms）
-    pub wait_selector: Option<String>,
-}
-
-impl LightpandaBrowser {
-    pub fn new<P: Into<PathBuf>>(bin: P) -> Self {
-        Self {
-            bin: bin.into(),
-            timeout: Duration::from_secs(25),
-            wait_until: "networkidle".to_string(),
-            wait_ms: None,
-            wait_selector: None,
-        }
-    }
-
-    /// 查找顺序：
-    /// 1. `$LIGHTPANDA_BIN`（显式覆盖）
-    /// 2. 工作区 `bin/lightpanda/current/bin/lightpanda`（deps.toml 管理布局，优先）
-    /// 3. 工作区 `bin/lightpanda`（旧 flat 布局，兼容期保留）
-    /// 4. `$PATH`
-    /// 5. `~/.local/bin/lightpanda` / `/usr/local/bin/lightpanda`
-    #[must_use]
-    pub fn autodetect() -> Option<Self> {
-        if let Ok(p) = std::env::var("LIGHTPANDA_BIN") {
-            let pb = PathBuf::from(p);
-            if pb.is_file() {
-                return Some(Self::new(pb));
-            }
-        }
-        if let Some(p) = find_workspace_bin() {
-            return Some(Self::new(p));
-        }
-        if let Ok(p) = which_in_path("lightpanda") {
-            return Some(Self::new(p));
-        }
-        for cand in [
-            std::env::var("HOME").ok().map(|h| format!("{h}/.local/bin/lightpanda")),
-            Some("/usr/local/bin/lightpanda".to_string()),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            let p = PathBuf::from(&cand);
-            if p.is_file() {
-                return Some(Self::new(p));
-            }
-        }
-        None
-    }
-}
-
-/// 从 `CARGO_MANIFEST_DIR` 或当前目录向上递归查找 lightpanda 二进制。
-/// 优先 deps.toml 管理的 `bin/lightpanda/current/bin/lightpanda[.exe]`，
-/// 兼容 fallback 到旧 flat 布局 `bin/lightpanda[.exe]`。
-fn find_workspace_bin() -> Option<PathBuf> {
-    let start = std::env::var("CARGO_MANIFEST_DIR")
-        .ok()
-        .map(PathBuf::from)
-        .or_else(|| std::env::current_dir().ok())?;
-    let exe_suffix = if cfg!(windows) { ".exe" } else { "" };
-    let candidates = [
-        format!("bin/lightpanda/current/bin/lightpanda{exe_suffix}"),
-        format!("bin/lightpanda{exe_suffix}"),
-    ];
-    let mut dir = start.as_path();
-    loop {
-        for rel in &candidates {
-            let cand = dir.join(rel);
-            if cand.is_file() {
-                return Some(cand);
-            }
-        }
-        dir = dir.parent()?;
-    }
-}
-
 fn which_in_path(name: &str) -> Result<PathBuf, ()> {
     let path = std::env::var_os("PATH").ok_or(())?;
     for dir in std::env::split_paths(&path) {
@@ -125,47 +33,6 @@ fn which_in_path(name: &str) -> Result<PathBuf, ()> {
         }
     }
     Err(())
-}
-
-#[async_trait]
-impl BrowserFetch for LightpandaBrowser {
-    fn name(&self) -> &'static str {
-        "lightpanda"
-    }
-
-    async fn fetch_html(&self, url: &str) -> FetchResult<String> {
-        let mut cmd = tokio::process::Command::new(&self.bin);
-        cmd.arg("fetch")
-            .arg("--dump")
-            .arg("html")
-            .arg("--wait-until")
-            .arg(&self.wait_until);
-        if let Some(sel) = &self.wait_selector {
-            cmd.arg("--wait-selector").arg(sel);
-        } else if let Some(ms) = self.wait_ms {
-            cmd.arg("--wait-ms").arg(ms.to_string());
-        }
-        cmd.arg(url);
-        cmd.stdin(std::process::Stdio::null());
-        cmd.stdout(std::process::Stdio::piped());
-        cmd.stderr(std::process::Stdio::piped());
-
-        let fut = async {
-            let output = cmd
-                .output()
-                .await
-                .map_err(|e| FetchError::Browser(format!("spawn failed: {e}")))?;
-            if !output.status.success() {
-                let err = String::from_utf8_lossy(&output.stderr);
-                return Err(FetchError::Browser(format!("exit {:?}: {err}", output.status.code())));
-            }
-            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-        };
-
-        tokio::time::timeout(self.timeout, fut)
-            .await
-            .map_err(|_| FetchError::Timeout)?
-    }
 }
 
 /// 用系统安装的 Chrome / Chromium 作为 headless 浏览器。
@@ -394,14 +261,7 @@ impl BrowserFetch for ChromeBrowser {
     }
 }
 
-/// 自动探测可用的 headless 浏览器：只检测 Chrome / Chromium。
-///
-/// 历史上曾经把 Lightpanda 作为默认首选（更轻量、启动更快），但实测下来它对
-/// 现代前端（微博的 React bundle、抖音、知乎等）经常在执行 JS 时直接抛
-/// `caught.exception=Unknown` 而水合失败，并且**仍以 exit 0 返回一张空壳 DOM**，
-/// 导致上层无从识别失败、也不会再回退到 Chrome。为了避免这种"假装成功"，
-/// 现在 autodetect 链路里彻底移除 Lightpanda：调用方如果仍想用，可显式调用
-/// [`crate::WebFetcherBuilder::with_lightpanda_autodetect`] 自负盈亏。
+/// 自动探测可用的 headless 浏览器：检测 Chrome / Chromium。
 pub fn autodetect_browser() -> Option<Arc<dyn BrowserFetch>> {
     if let Some(ch) = ChromeBrowser::autodetect() {
         tracing::info!("autodetected headless browser: chrome");

@@ -41,7 +41,7 @@ print_stderr              = "warn"
 name = "tokimo-web-fetch"
 version = "0.1.0"
 edition = "2024"
-description = "Unified web page fetcher: HTTP / headless browser (Lightpanda) / Cloudflare bypass (FlareSolverr) + Readability denoising"
+description = "Unified web page fetcher: HTTP / headless browser (Chrome) / Cloudflare bypass (FlareSolverr) + Readability denoising"
 
 [lib]
 name = "tokimo_web_fetch"

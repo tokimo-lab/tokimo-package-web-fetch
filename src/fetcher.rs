@@ -113,7 +113,7 @@ impl WebFetcher {
         WebFetcherBuilder::default()
     }
 
-    /// 默认配置：reqwest + headless 浏览器 autodetect（Lightpanda → Chrome）+ 无 FlareSolverr。
+    /// 默认配置：reqwest + headless 浏览器 autodetect（Chrome）+ 无 FlareSolverr。
     #[must_use]
     pub fn with_defaults() -> Self {
         WebFetcherBuilder::default().with_autodetect().build()
@@ -379,24 +379,7 @@ impl WebFetcherBuilder {
         self
     }
 
-    /// 自动探测系统里的 lightpanda；探测不到就保持 None。
-    ///
-    /// **注意**：Lightpanda 对现代 SPA（微博 React bundle、抖音等）兼容性较差，
-    /// 经常在执行 JS 时静默失败并返回空壳 HTML。一般情况下推荐改用
-    /// [`Self::with_autodetect`]（只用 Chrome）。
-    #[must_use]
-    pub fn with_lightpanda_autodetect(mut self) -> Self {
-        if let Some(lp) = crate::browser::LightpandaBrowser::autodetect() {
-            self.browser = Some(Arc::new(lp));
-        }
-        self
-    }
-
     /// 自动探测可用的 headless 浏览器。当前实现只检测 Chrome / Chromium。
-    ///
-    /// 历史上曾把 Lightpanda 作为首选回退，但实测它对现代前端兼容性差且会
-    /// "假装成功"，已从 autodetect 链路移除；需要时请显式调用
-    /// [`Self::with_lightpanda_autodetect`]。
     #[must_use]
     pub fn with_autodetect(mut self) -> Self {
         if let Some(browser) = crate::browser::autodetect_browser() {
