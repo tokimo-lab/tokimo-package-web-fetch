@@ -28,3 +28,12 @@ pre-commit:
         [ -z "$files" ] && exit 0
         pnpm exec biome format --write --no-errors-on-unmatched $files
       stage_fixed: true
+
+# pre-push 镜像 CI 关键检查，阻止 lint/fmt/clippy 不绿就推到远端，避免 CI 邮件刷屏。
+# 紧急情况可以 `git push --no-verify` 绕过。
+pre-push:
+  commands:
+    fmt-check:
+      run: cargo fmt -p tokimo-web-fetch -- --check
+    clippy:
+      run: cargo clippy -p tokimo-web-fetch --lib --bins --tests -- -D warnings
