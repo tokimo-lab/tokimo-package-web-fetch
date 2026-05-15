@@ -253,9 +253,12 @@ impl WebFetcher {
             .await
             .map_err(|_| FetchError::Timeout)??;
 
-        // 非 2xx 直接报错，附上 status + 截断 body 预览，让上游（含 LLM）
+        // 4xx / 5xx 直接报错，附上 status + 截断 body 预览，让上游（含 LLM）
         // 看到真实失败原因，而不是经过 Readability 失败包装后的"failed to extract"。
-        if !(200..300).contains(&raw.status) {
+        // 3xx 在 reqwest 默认 redirect policy（limited(10)）下会被自动跟随，
+        // 这里保留兜底分支：万一 redirect chain 超限或 client 关闭了跟随，
+        // 也按非错误返回，让 body 落到下面 HTML/非 HTML 分支正常处理。
+        if raw.status >= 400 {
             return Err(FetchError::BadStatus {
                 status: raw.status,
                 final_url: raw.final_url,
