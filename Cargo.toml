@@ -57,6 +57,7 @@ thiserror = "2"
 tracing = "0.1"
 url = "2"
 dom_smoothie = "0.17"
+dom_query = "0.27"
 
 [lints]
 workspace = true

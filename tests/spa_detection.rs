@@ -2,8 +2,9 @@
 
 #![allow(clippy::print_stdout)]
 
-use dom_smoothie::{Config, Readability};
+use dom_smoothie::{Config, Readability, TextMode};
 use tokimo_web_fetch::cloudflare::looks_like_spa_or_blank;
+use tokimo_web_fetch::count_visible_content_chars;
 use tokimo_web_fetch::denoise_html;
 
 const SPA_BLANK_MIN_CHARS: usize = 120;
@@ -43,10 +44,10 @@ async fn tianqi_qq_com_spa_detection() {
     println!("  Result: is_spa = {is_spa_stage1}");
 
     // ── Stage 2: Readability 提取后 ──
-    let denoised = denoise_html(&body, "https://tianqi.qq.com/", "https://tianqi.qq.com/");
+    let denoised = denoise_html(&body, "https://tianqi.qq.com/", "https://tianqi.qq.com/", &[]);
     match &denoised {
         Ok(article) => {
-            let readable_chars = article.content_text.chars().filter(|c| !c.is_whitespace()).count();
+            let readable_chars = count_visible_content_chars(&article.content_text);
             println!("\n[Stage 2] Readability extracted:");
             println!("  Title: {}", article.title);
             println!("  content_text length: {} chars", article.content_text.len());
@@ -68,9 +69,7 @@ async fn tianqi_qq_com_spa_detection() {
     }
 
     let stage2_needs_escalation = match &denoised {
-        Ok(article) => {
-            article.content_text.chars().filter(|c| !c.is_whitespace()).count() < BROWSER_ESCALATION_MIN_READABLE_CHARS
-        }
+        Ok(article) => count_visible_content_chars(&article.content_text) < BROWSER_ESCALATION_MIN_READABLE_CHARS,
         Err(_) => true,
     };
 
@@ -96,6 +95,7 @@ async fn tianqi_readability_with_different_thresholds() {
     for threshold in [0, 100, 200, 500] {
         let cfg = Config {
             char_threshold: threshold,
+            text_mode: TextMode::Markdown,
             ..Config::default()
         };
         let result =

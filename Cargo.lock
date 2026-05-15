@@ -1836,6 +1836,7 @@ name = "tokimo-web-fetch"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "dom_query",
  "dom_smoothie",
  "reqwest",
  "serde",

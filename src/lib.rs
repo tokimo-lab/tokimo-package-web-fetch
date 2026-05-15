@@ -23,13 +23,17 @@ pub mod browser;
 pub mod cloudflare;
 pub mod error;
 pub mod fetcher;
+pub mod keyword_boost;
 pub mod readability;
 pub mod ssrf;
 
 pub use browser::{BrowserFetch, ChromeBrowser, VIRTUAL_TIME_BUDGET_DEFAULT, autodetect_browser};
 pub use cloudflare::{CfFetchResult, CloudflareBypassClient, is_under_challenge, looks_like_spa_or_blank};
 pub use error::{FetchError, FetchResult};
-pub use fetcher::{Denoise, FetchMode, FetchOptions, FetchResponse, UsedChannel, WebFetcher, WebFetcherBuilder};
+pub use fetcher::{
+    Denoise, FetchMode, FetchOptions, FetchResponse, UsedChannel, WebFetcher, WebFetcherBuilder,
+    count_visible_content_chars,
+};
 pub use readability::{DenoisedArticle, denoise_html};
 
 /// 默认 UA 使用较新的桌面 Chrome。
@@ -39,4 +43,4 @@ pub use readability::{DenoisedArticle, denoise_html};
 /// （例如 tianqi.eastday.com / tianqi.com），导致 Readability 抓到的只是
 /// 一个 311 字节的 403 提示页。Chrome UA 实测能穿过这些默认规则。
 pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
-     (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+     (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36";

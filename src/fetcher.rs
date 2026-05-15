@@ -1,7 +1,9 @@
 //! 统一 web 抓取入口：HTTP / 无头浏览器 / Cloudflare bypass + 可选 Readability 降噪。
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use reqwest::header::{HeaderMap, HeaderValue};
 
 use crate::browser::BrowserFetch;
 use crate::cloudflare::{CloudflareBypassClient, has_anti_bot_wall, is_under_challenge, looks_like_spa_or_blank};
@@ -15,6 +17,84 @@ const BROWSER_ESCALATION_MIN_READABLE_CHARS: usize = 200;
 /// 在做 "粗略 HTML → 纯文本" 统计时，少于这个可见字符数认为
 /// 页面基本是 SPA 壳子或空白 —— 此阈值给 auto 通道在 pre-denoise 时用。
 const SPA_BLANK_MIN_CHARS: usize = 120;
+
+/// 统计 content_text 中的可见字符数，剔除 Markdown 链接/图片里的 URL。
+///
+/// `content_text` 使用 `TextMode::Markdown` 输出，包含 `[text](url)` 格式链接，
+/// URL 部分会虚高字符数。此函数将 URL 部分剥离后再统计，得到更准确的内容密度。
+pub fn count_visible_content_chars(text: &str) -> usize {
+    // 剥离 markdown 链接/图片 URL: [text](url) → text, ![alt](url) → alt
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+    let mut count = 0usize;
+
+    while i < len {
+        // 检查是否是图片链接 ![...](...)
+        let bracket_start = if chars[i] == '!' && i + 1 < len && chars[i + 1] == '[' {
+            i + 2 // 跳过 '!' 和 '['
+        } else if chars[i] == '[' {
+            i + 1 // 跳过 '['
+        } else {
+            // 普通字符
+            if !chars[i].is_whitespace() {
+                count += 1;
+            }
+            i += 1;
+            continue;
+        };
+
+        // 找配对的 ']'，支持嵌套
+        let mut depth = 1usize;
+        let mut j = bracket_start;
+        while j < len {
+            if chars[j] == '[' {
+                depth += 1;
+            } else if chars[j] == ']' {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            j += 1;
+        }
+        if depth != 0 {
+            // 没找到配对的 ']', 当前字符不是链接起点
+            if !chars[i].is_whitespace() {
+                count += 1;
+            }
+            i += 1;
+            continue;
+        }
+
+        // j 指向配对的 ']', 检查后面是否是 '('
+        if j + 1 < len && chars[j + 1] == '(' {
+            // 找到链接: 统计 bracket_start..j 之间的非空白字符
+            for ch in &chars[bracket_start..j] {
+                if !ch.is_whitespace() {
+                    count += 1;
+                }
+            }
+            // 跳过 '(' ... ')'
+            if let Some(close) = chars[j + 2..].iter().position(|&c| c == ')') {
+                i = j + 2 + close + 1;
+            } else {
+                // 没有配对的 ')', 不是有效链接
+                if !chars[i].is_whitespace() {
+                    count += 1;
+                }
+                i += 1;
+            }
+        } else {
+            // 不是链接，当前字符正常计数
+            if !chars[i].is_whitespace() {
+                count += 1;
+            }
+            i += 1;
+        }
+    }
+    count
+}
 
 /// 上面这些阈值对 "很短的反爬 403/验证页" 单独再加一道阈值：
 /// body 小于这个长度时，几乎不可能承载有用内容，直接升级浏览器。
@@ -38,9 +118,9 @@ pub enum FetchMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Denoise {
     /// 原始 HTML，不处理。
-    #[default]
     None,
-    /// Readability 抽主文，返回结构化 [`DenoisedArticle`]。
+    /// Readability 抽主文，返回结构化 [`DenoisedArticle`]（Markdown 格式）。
+    #[default]
     Readability,
 }
 
@@ -55,6 +135,9 @@ pub struct FetchOptions {
     pub extra_headers: Vec<(String, String)>,
     /// 是否启用 SSRF 防护（检查目标 IP 是否为私有/内网地址）。默认关闭。
     pub ssrf_enabled: bool,
+    /// 关键词列表，用于 Readability 降噪前的关键词注入预处理。
+    /// 非空时会提高包含关键词的元素在 Readability 评分中的权重。
+    pub keywords: Vec<String>,
 }
 
 impl Default for FetchOptions {
@@ -66,6 +149,7 @@ impl Default for FetchOptions {
             cookie: None,
             extra_headers: Vec::new(),
             ssrf_enabled: false,
+            keywords: Vec::new(),
         }
     }
 }
@@ -149,7 +233,10 @@ impl WebFetcher {
             Denoise::None => None,
             // Readability 失败时先不直接报错，留给下面的浏览器升级兜底；
             // 如果最后仍然没有可用降噪结果，再返回错误。
-            Denoise::Readability => denoise_html(&raw.body, url, &raw.final_url).ok(),
+            Denoise::Readability => {
+                let kw_refs: Vec<&str> = opts.keywords.iter().map(String::as_str).collect();
+                denoise_html(&raw.body, url, &raw.final_url, &kw_refs).ok()
+            }
         };
 
         // 后降噪升级：HTTP 通道拿到 200 但 Readability 只抽出很短正文
@@ -190,7 +277,7 @@ impl WebFetcher {
         // denoise 失败（None）也要升级；否则按正文字符数判断。
         let readable_chars: usize = denoised
             .as_ref()
-            .map_or(0, |a| a.content_text.chars().filter(|c| !c.is_whitespace()).count());
+            .map_or(0, |a| count_visible_content_chars(&a.content_text));
         if denoised.is_some() && readable_chars >= BROWSER_ESCALATION_MIN_READABLE_CHARS {
             return (raw, denoised);
         }
@@ -204,10 +291,11 @@ impl WebFetcher {
         );
         match self.browser_or_fallback(url, opts).await {
             Some(Ok(new_raw)) => {
-                let new_denoised = denoise_html(&new_raw.body, url, &new_raw.final_url).ok();
+                let kw_refs: Vec<&str> = opts.keywords.iter().map(String::as_str).collect();
+                let new_denoised = denoise_html(&new_raw.body, url, &new_raw.final_url, &kw_refs).ok();
                 let new_chars: usize = new_denoised
                     .as_ref()
-                    .map_or(0, |d| d.content_text.chars().filter(|c| !c.is_whitespace()).count());
+                    .map_or(0, |d| count_visible_content_chars(&d.content_text));
                 if new_chars > readable_chars {
                     (new_raw, new_denoised)
                 } else {
@@ -407,8 +495,28 @@ impl WebFetcherBuilder {
                 .user_agent
                 .clone()
                 .unwrap_or_else(|| crate::DEFAULT_USER_AGENT.to_string());
+            let mut default_headers = HeaderMap::new();
+
+            // 浏览器标配 headers
+            default_headers.insert("accept", HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"));
+            default_headers.insert("accept-language", HeaderValue::from_static("en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7"));
+            default_headers.insert("sec-ch-ua", HeaderValue::from_static(r#""Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147""#));
+            default_headers.insert("sec-ch-ua-mobile", HeaderValue::from_static("?0"));
+            default_headers.insert("sec-ch-ua-platform", HeaderValue::from_static(r#""Windows""#));
+            default_headers.insert("sec-fetch-dest", HeaderValue::from_static("document"));
+            default_headers.insert("sec-fetch-mode", HeaderValue::from_static("navigate"));
+            default_headers.insert("sec-fetch-site", HeaderValue::from_static("none"));
+            default_headers.insert("sec-fetch-user", HeaderValue::from_static("?1"));
+            default_headers.insert("upgrade-insecure-requests", HeaderValue::from_static("1"));
+
+            // 生成随机无害 Cookie，避免被识别为无 cookie 的纯净爬虫
+            if let Ok(cookie) = generate_benign_cookie() {
+                default_headers.insert("cookie", HeaderValue::from_str(&cookie).unwrap());
+            }
+
             reqwest::Client::builder()
                 .user_agent(ua)
+                .default_headers(default_headers)
                 .gzip(true)
                 .brotli(true)
                 .cookie_store(true)
@@ -426,5 +534,82 @@ impl WebFetcherBuilder {
             cf,
             default_options: self.default_options,
         }
+    }
+}
+
+/// 生成无害的随机 Cookie，让请求看起来像正常浏览器访问。
+///
+/// 包含常见的追踪/会话 cookie 名（如 `_ga`、`_gid`、`__cf_bm`），
+/// 值是随机但格式正确的字符串，不指向任何真实会话。
+fn generate_benign_cookie() -> Result<String, &'static str> {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| "clock error")?
+        .as_secs();
+
+    // LCG 常数 (MMIX by Knuth)，用时间戳做简单伪随机，不引入额外依赖
+    const M: u64 = 6_364_136_223_846_793_005;
+    const A: u64 = 1_442_695_040_888_963_407;
+    let r1 = (ts.wrapping_mul(M).wrapping_add(A)) >> 32;
+    let r2 = (r1.wrapping_mul(M).wrapping_add(A)) >> 32;
+    let r3 = (r2.wrapping_mul(M).wrapping_add(A)) >> 32;
+
+    // Google Analytics 风格: GA1.2.随机数.时间戳
+    let ga_value = format!("GA1.2.{}.{}", r1 % 1_000_000_000, ts - 86400);
+    // Cloudflare 风格: 基于时间戳的 hex
+    let cf_bm = format!("{r2:016x}{r3:016x}");
+    // 简单的 session id
+    let sid = format!("{r1:08x}-{:04x}-{:04x}", r2 & 0xFFFF, r3 & 0xFFFF);
+
+    Ok(format!(
+        "_ga={ga_value}; _gid={ga_value}; __cf_bm={cf_bm}; session_id={sid}"
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::count_visible_content_chars;
+
+    #[test]
+    fn plain_text_count() {
+        assert_eq!(count_visible_content_chars("hello world"), 10);
+        assert_eq!(count_visible_content_chars(""), 0);
+        assert_eq!(count_visible_content_chars("  \n\t  "), 0);
+    }
+
+    #[test]
+    fn markdown_link_strips_url() {
+        // [text](url) should count only "text", not the URL
+        let md = "see [Google](https://www.google.com/?q=test&utm_source=x) for details";
+        // "see" + "Google" + "for" + "details" = 3+6+3+7 = 19
+        assert_eq!(count_visible_content_chars(md), 19);
+    }
+
+    #[test]
+    fn markdown_image_strips_url() {
+        let md = "![alt text](https://example.com/image.png)";
+        // "alttext" = 7
+        assert_eq!(count_visible_content_chars(md), 7);
+    }
+
+    #[test]
+    fn mixed_content() {
+        let md = "[关于腾讯](http://www.tencent.com/) | [About](http://www.tencent.com/index_e.shtml)";
+        // "关于腾讯" + "|" + "About" = 4+1+5 = 10
+        assert_eq!(count_visible_content_chars(md), 10);
+    }
+
+    #[test]
+    fn bare_brackets_not_links() {
+        let md = "array[0] is not a link";
+        // "array" + "[0]" + "is" + "not" + "a" + "link" = 5+3+2+3+1+4 = 18
+        assert_eq!(count_visible_content_chars(md), 18);
+    }
+
+    #[test]
+    fn nested_brackets() {
+        let md = "see [the [inner] thing](http://example.com)";
+        // "see" + "the[inner]thing" = 3+15 = 18
+        assert_eq!(count_visible_content_chars(md), 18);
     }
 }

@@ -62,7 +62,7 @@ pub struct ChromeBrowser {
 /// Chrome/Puppeteer 社区惯例：SPA 页面需要 5–10s 让异步 JS + 网络请求完成。
 /// 该值适用于需要远程 API 调用的页面（天气、新闻、列表等），
 /// 对纯前端渲染的轻量 SPA 可适当降低至 3000–5000。
-pub const VIRTUAL_TIME_BUDGET_DEFAULT: u32 = 5_000;
+pub const VIRTUAL_TIME_BUDGET_DEFAULT: u32 = 10_000;
 
 /// Chrome 路径缓存，整个进程生命周期只搜索一次。
 static CHROME_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
@@ -74,7 +74,7 @@ impl ChromeBrowser {
     pub fn new<P: Into<PathBuf>>(bin: P) -> Self {
         Self {
             bin: bin.into(),
-            timeout: Duration::from_secs(10),
+            timeout: Duration::from_secs(15),
             virtual_time_budget_ms: Some(VIRTUAL_TIME_BUDGET_DEFAULT),
         }
     }
