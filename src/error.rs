@@ -29,6 +29,13 @@ pub enum FetchError {
     #[error("non-success status: {0}")]
     Status(u16),
 
+    #[error("HTTP {status} for {final_url}\n{body_preview}")]
+    BadStatus {
+        status: u16,
+        final_url: String,
+        body_preview: String,
+    },
+
     #[error("invalid url: {0}")]
     InvalidUrl(String),
 

@@ -100,6 +100,24 @@ pub fn count_visible_content_chars(text: &str) -> usize {
 /// body 小于这个长度时，几乎不可能承载有用内容，直接升级浏览器。
 const TINY_BODY_BYTES: usize = 512;
 
+/// 非 2xx 状态码错误里附带多少字节的 body 预览（按 char 边界截断）。
+const BAD_STATUS_BODY_PREVIEW_BYTES: usize = 1024;
+
+/// 按字符边界把 body 截到大约 `max_bytes` 字节，避免在错误信息里塞整页 HTML。
+fn truncate_body_preview(body: &str, max_bytes: usize) -> String {
+    let body = body.trim();
+    if body.len() <= max_bytes {
+        return body.to_string();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut out = body[..end].to_string();
+    out.push_str("…[truncated]");
+    out
+}
+
 /// 选择哪种通道抓页面。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FetchMode {
@@ -167,8 +185,14 @@ pub struct FetchResponse {
     pub status: u16,
     pub final_url: String,
     pub body: String,
+    /// Lower-cased `Content-Type` header (e.g. `text/html; charset=utf-8`,
+    /// `application/json`). `None` for channels that don't surface it
+    /// (browser / CloudflareBypass).
+    pub content_type: Option<String>,
     pub used: UsedChannel,
     /// `denoise = Readability` 时为 `Some`；否则为 `None`。
+    /// Non-HTML responses (JSON / plain text) intentionally leave this as
+    /// `None`; consumers should fall back to `body`.
     pub denoised: Option<DenoisedArticle>,
 }
 
@@ -229,6 +253,29 @@ impl WebFetcher {
             .await
             .map_err(|_| FetchError::Timeout)??;
 
+        // 非 2xx 直接报错，附上 status + 截断 body 预览，让上游（含 LLM）
+        // 看到真实失败原因，而不是经过 Readability 失败包装后的"failed to extract"。
+        if !(200..300).contains(&raw.status) {
+            return Err(FetchError::BadStatus {
+                status: raw.status,
+                final_url: raw.final_url,
+                body_preview: truncate_body_preview(&raw.body, BAD_STATUS_BODY_PREVIEW_BYTES),
+            });
+        }
+
+        // 非 HTML 响应（典型：JSON / 纯文本 API）直接返回原始 body，
+        // Readability 对它们没有意义，强行降噪只会得到空结果。
+        if !raw.is_html_like() {
+            return Ok(FetchResponse {
+                status: raw.status,
+                final_url: raw.final_url,
+                body: raw.body,
+                content_type: raw.content_type,
+                used: raw.used,
+                denoised: None,
+            });
+        }
+
         let denoised = match opts.denoise {
             Denoise::None => None,
             // Readability 失败时先不直接报错，留给下面的浏览器升级兜底；
@@ -254,6 +301,7 @@ impl WebFetcher {
             status: raw.status,
             final_url: raw.final_url,
             body: raw.body,
+            content_type: raw.content_type,
             used: raw.used,
             denoised,
         })
@@ -361,6 +409,7 @@ impl WebFetcher {
                 status: 200,
                 final_url: url.to_string(),
                 body,
+                content_type: None,
                 used: UsedChannel::Browser,
             }),
             Err(e) => {
@@ -388,6 +437,7 @@ impl WebFetcher {
             status: r.status,
             final_url: r.final_url,
             body: r.body,
+            content_type: None,
             used: UsedChannel::CloudflareBypass,
         })
     }
@@ -403,11 +453,17 @@ impl WebFetcher {
         let resp = req.send().await?;
         let status = resp.status().as_u16();
         let final_url = resp.url().to_string();
+        let content_type = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_ascii_lowercase);
         let body = resp.text().await?;
         Ok(RawFetch {
             status,
             final_url,
             body,
+            content_type,
             used: UsedChannel::Http,
         })
     }
@@ -417,7 +473,22 @@ struct RawFetch {
     status: u16,
     final_url: String,
     body: String,
+    /// Lower-cased `Content-Type` header value if the channel surfaced one.
+    content_type: Option<String>,
     used: UsedChannel,
+}
+
+impl RawFetch {
+    /// True iff the response is (or is assumed to be) HTML/XHTML — only then
+    /// is Readability extraction meaningful. Channels that don't expose
+    /// `Content-Type` (browser, CF bypass) are treated as HTML since they
+    /// always produce rendered DOM.
+    fn is_html_like(&self) -> bool {
+        let Some(ct) = &self.content_type else {
+            return true;
+        };
+        ct.starts_with("text/html") || ct.starts_with("application/xhtml")
+    }
 }
 
 /// `fetch_auto` 阶段的"要不要升级通道"判断。
