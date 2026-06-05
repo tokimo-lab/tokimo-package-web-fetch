@@ -38,12 +38,12 @@ async fn main() {
         ..Default::default()
     };
     for url in urls {
-        println!("\n===== {url} =====");
+        tracing::info!("\n===== {url} =====");
         match fetcher.fetch_with(url, &opts).await {
             Ok(resp) => {
                 let text = resp.denoised.as_ref().map_or("(none)", |d| d.content_text.as_str());
                 let chars: usize = text.chars().filter(|c| !c.is_whitespace()).count();
-                println!(
+                tracing::info!(
                     "status={} used={:?} body_bytes={} readable_chars={}",
                     resp.status,
                     resp.used,
@@ -51,9 +51,9 @@ async fn main() {
                     chars
                 );
                 let preview: String = text.chars().take(300).collect();
-                println!("preview: {preview}");
+                tracing::info!("preview: {preview}");
             }
-            Err(e) => println!("ERR: {e}"),
+            Err(e) => tracing::error!("ERR: {e}"),
         }
     }
 }
