@@ -35,7 +35,7 @@ println!("{}", response.denoised.unwrap().text_content);
 
 ## Raw responses behind Cloudflare
 
-`CloudflareBypassClient::fetch_raw(url, headers)` first sends a normal HTTP GET. Only a response marked `cf-mitigated: challenge` invokes FlareSolverr. The solver receives `returnOnlyCookies: true` with a 10-second timeout; its scoped cookies and User-Agent are then used to replay the original URL. The returned `reqwest::Response` contains the actual status, headers and body, including XML, conditional `304` responses and `Retry-After`. Browser-rendered HTML and FlareSolverr's synthetic status are never substituted for the target response. A second challenge is returned to the caller without another solve attempt.
+`CloudflareBypassClient::fetch_raw(url, headers)` first sends a normal HTTP GET. Only a response marked `cf-mitigated: challenge` invokes FlareSolverr. The solver receives `returnOnlyCookies: true` with a 60-second solve budget and a 65-second HTTP request timeout; its scoped cookies and User-Agent are then used to replay the original URL. The returned `reqwest::Response` contains the actual status, headers and body, including XML, conditional `304` responses and `Retry-After`. Browser-rendered HTML and FlareSolverr's synthetic status are never substituted for the target response. A second challenge is returned to the caller without another solve attempt.
 
 Inject a client using `CloudflareBypassClient::with_client`. Redirects, proxies, TLS and target HTTP timeouts remain controlled by that client. Callers validating each redirect must disable automatic redirects. Callers also enforce an overall timeout and streamed body limit. Clearance cookies are scoped with a cookie jar for each solve and are not persisted across calls.
 

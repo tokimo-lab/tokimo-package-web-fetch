@@ -118,7 +118,7 @@ impl CloudflareBypassClient {
         })?;
         drop(response);
         let solution = self
-            .request_solution(flaresolverr_url, url, None, Some(true), 10_000)
+            .request_solution(flaresolverr_url, url, None, Some(true), 60_000)
             .await?;
         let solved_url = solution
             .url
@@ -206,7 +206,7 @@ impl CloudflareBypassClient {
         let endpoint = format!("{}/v1", flaresolverr_url.trim_end_matches('/'));
         let mut request = self.http.post(&endpoint).json(&req);
         if return_only_cookies == Some(true) {
-            request = request.timeout(Duration::from_millis(u64::from(max_timeout)));
+            request = request.timeout(Duration::from_millis(u64::from(max_timeout)) + Duration::from_secs(5));
         }
         let resp = request
             .send()
