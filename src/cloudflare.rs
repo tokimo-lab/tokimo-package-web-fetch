@@ -7,7 +7,9 @@
 //! 服务，由它驱动真浏览器解出 `cf_clearance` 等 cookie 后回放。
 
 use crate::error::{FetchError, FetchResult};
+use reqwest::{cookie::CookieStore, header};
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// 一次 HTML 抓取的结果。
 #[derive(Debug, Clone)]
@@ -34,6 +36,8 @@ struct FlareSolverrRequest {
     cookies: Option<Vec<FlareSolverrCookie>>,
     #[serde(rename = "maxTimeout")]
     max_timeout: u32,
+    #[serde(rename = "returnOnlyCookies", skip_serializing_if = "Option::is_none")]
+    return_only_cookies: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -54,6 +58,19 @@ struct FlareSolverrSolution {
     url: Option<String>,
     status: Option<u16>,
     response: Option<String>,
+    cookies: Option<Vec<FlareSolverrResponseCookie>>,
+    #[serde(rename = "userAgent")]
+    user_agent: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct FlareSolverrResponseCookie {
+    name: String,
+    value: String,
+    domain: Option<String>,
+    path: Option<String>,
+    #[serde(default)]
+    secure: bool,
 }
 
 impl CloudflareBypassClient {
@@ -85,12 +102,86 @@ impl CloudflareBypassClient {
         self.fetch_direct(url, cookie).await
     }
 
+    /// Fetch a real HTTP response, solving an explicit Cloudflare challenge once.
+    ///
+    /// Redirects, proxies, TLS and HTTP timeouts follow the injected client's policy.
+    /// Callers validating redirects must use `reqwest::redirect::Policy::none()`.
+    /// The caller owns the overall deadline and streamed response body limit.
+    /// Browser output is used only for scoped cookies and User-Agent, never as the body.
+    pub async fn fetch_raw(&self, url: &str, mut headers: header::HeaderMap) -> FetchResult<reqwest::Response> {
+        let response = self.http.get(url).headers(headers.clone()).send().await?;
+        if !is_cloudflare_challenge(response.headers()) {
+            return Ok(response);
+        }
+        let flaresolverr_url = self.flaresolverr_url.as_deref().ok_or_else(|| {
+            FetchError::CloudflareBypass("Cloudflare challenge detected, but FlareSolverr URL is not configured".into())
+        })?;
+        drop(response);
+        let solution = self
+            .request_solution(flaresolverr_url, url, None, Some(true), 10_000)
+            .await?;
+        let solved_url = solution
+            .url
+            .as_deref()
+            .ok_or_else(|| FetchError::CloudflareBypass("no solution URL returned".into()))?;
+        let solved_url = url::Url::parse(solved_url).map_err(|e| FetchError::CloudflareBypass(e.to_string()))?;
+        let requested_url = url::Url::parse(url).map_err(|e| FetchError::InvalidUrl(e.to_string()))?;
+        let user_agent = solution
+            .user_agent
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| FetchError::CloudflareBypass("no solution User-Agent returned".into()))?;
+        let jar = reqwest::cookie::Jar::default();
+        for cookie in solution.cookies.unwrap_or_default() {
+            let mut value = format!("{}={}", cookie.name, cookie.value);
+            if let Some(domain) = cookie.domain {
+                value.push_str("; Domain=");
+                value.push_str(&domain);
+            }
+            if let Some(path) = cookie.path {
+                value.push_str("; Path=");
+                value.push_str(&path);
+            }
+            if cookie.secure {
+                value.push_str("; Secure");
+            }
+            jar.add_cookie_str(&value, &solved_url);
+        }
+        headers.insert(
+            header::USER_AGENT,
+            user_agent
+                .parse()
+                .map_err(|e| FetchError::CloudflareBypass(format!("invalid solution User-Agent: {e}")))?,
+        );
+        if let Some(cookies) = jar.cookies(&requested_url) {
+            headers.insert(header::COOKIE, cookies);
+        }
+        Ok(self.http.get(url).headers(headers).send().await?)
+    }
+
     async fn fetch_via_flaresolverr(
         &self,
         flaresolverr_url: &str,
         url: &str,
         cookie: Option<&str>,
     ) -> FetchResult<CfFetchResult> {
+        let solution = self
+            .request_solution(flaresolverr_url, url, cookie, None, 30_000)
+            .await?;
+        Ok(CfFetchResult {
+            status: solution.status.unwrap_or(200),
+            body: solution.response.unwrap_or_default(),
+            final_url: solution.url.unwrap_or_else(|| url.to_string()),
+        })
+    }
+
+    async fn request_solution(
+        &self,
+        flaresolverr_url: &str,
+        url: &str,
+        cookie: Option<&str>,
+        return_only_cookies: Option<bool>,
+        max_timeout: u32,
+    ) -> FetchResult<FlareSolverrSolution> {
         let cookies = cookie.map(|c| {
             c.split(';')
                 .filter_map(|pair| {
@@ -108,14 +199,16 @@ impl CloudflareBypassClient {
             cmd: "request.get".to_string(),
             url: url.to_string(),
             cookies,
-            max_timeout: 30_000,
+            max_timeout,
+            return_only_cookies,
         };
 
         let endpoint = format!("{}/v1", flaresolverr_url.trim_end_matches('/'));
-        let resp = self
-            .http
-            .post(&endpoint)
-            .json(&req)
+        let mut request = self.http.post(&endpoint).json(&req);
+        if return_only_cookies == Some(true) {
+            request = request.timeout(Duration::from_millis(u64::from(max_timeout)));
+        }
+        let resp = request
             .send()
             .await
             .map_err(|e| FetchError::CloudflareBypass(format!("post failed: {e}")))?;
@@ -135,14 +228,8 @@ impl CloudflareBypassClient {
                 data.message.unwrap_or_default()
             )));
         }
-        let solution = data
-            .solution
-            .ok_or_else(|| FetchError::CloudflareBypass("no solution returned".into()))?;
-        Ok(CfFetchResult {
-            status: solution.status.unwrap_or(200),
-            body: solution.response.unwrap_or_default(),
-            final_url: solution.url.unwrap_or_else(|| url.to_string()),
-        })
+        data.solution
+            .ok_or_else(|| FetchError::CloudflareBypass("no solution returned".into()))
     }
 
     async fn fetch_direct(&self, url: &str, cookie: Option<&str>) -> FetchResult<CfFetchResult> {
@@ -160,6 +247,12 @@ impl CloudflareBypassClient {
             final_url,
         })
     }
+}
+
+/// Cloudflare marks challenge responses with this header, regardless of HTTP status.
+#[must_use]
+pub fn is_cloudflare_challenge(headers: &header::HeaderMap) -> bool {
+    headers.get("cf-mitigated").is_some_and(|value| value == "challenge")
 }
 
 /// 检测 HTML 是否是 Cloudflare / DDoS-Guard 挑战页。
